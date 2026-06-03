@@ -7,6 +7,7 @@
 - **自动转录**：基于 faster-whisper (large-v3) 的中文语音识别
 - **智能断句**：按标点、虚词、关联词多维度分割，每行 ≤ 16 字符
 - **术语纠错**：内置德州扑克领域纠错字典（可扩展自定义领域）
+- **质量审查**：自动检测并修复单字行、纯标点行、极短行
 - **批量处理**：支持单文件或整个目录
 - **时间同步**：分割后时间戳按比例精确分配
 
@@ -30,6 +31,12 @@ python process.py --input video.mp4 --fw-dir /path/to/faster-whisper
 
 ```bash
 python process.py --input ./subtitles_folder
+```
+
+### 质量审查（修复单字/极短行）
+
+```bash
+python review_and_fix.py --input ./corrected_subtitles
 ```
 
 ### 自定义参数
