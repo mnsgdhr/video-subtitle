@@ -101,6 +101,12 @@ python review_and_fix.py --input ./corrected_subtitles
 python fix_timestamps.py --input ./final_subtitles
 ```
 
+### 修复英文单词断裂
+
+```bash
+python fix_broken_words.py --input ./final_subtitles
+```
+
 ---
 
 ## 文件结构

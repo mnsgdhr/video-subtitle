@@ -1,190 +1,149 @@
 """
-修复英文单词被断开的问题
+修复英文单词被断开的问题 V2
 ========================
 问题：英文单词被分割在两行中间（如 de/ny, check/raise）
-修复：检测行尾的半个英文词，合并到下一行，重新分割
+策略：
+1. 断裂词合并：至少一个片段<4字母 → 直接拼接（de+ny=deny）
+2. 短词对合并：两个都是4-6字母的短词 → 加空格（deny+equity=deny equity）
+3. 合并后超长时：把英文词移到下一行
+
+用法:
+  python fix_broken_words.py --input <SRT目录> [--output <输出目录>]
 """
 import pysubs2
 import os
 import sys
+import argparse
 import re
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-INPUT_DIR = r"F:\video\血战鱿鱼\精剪版\corrected_subtitles\final_subtitles\final_subtitles_v2\fixed_timestamps"
-OUTPUT_DIR = os.path.join(INPUT_DIR, "no_broken_words")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-MAX_CHARS = 20
+DEFAULT_MAX_CHARS = 20
 
 
-def find_broken_word(subs, i):
-    """检查第 i 行末尾是否有半个英文单词延伸到第 i+1 行"""
-    if i >= len(subs) - 1:
-        return None
-    
-    t1 = subs[i].text.strip()
-    t2 = subs[i + 1].text.strip()
-    
-    # 提取行尾的英文字母
-    match_end = re.search(r'([a-zA-Z]+)$', t1)
-    if not match_end:
-        return None
-    
-    end_fragment = match_end.group(1)
-    
-    # 提取下一行开头的英文字母
-    match_start = re.match(r'^([a-zA-Z]+)', t2)
-    if not match_start:
-        return None
-    
-    start_fragment = match_start.group(1)
-    
-    # 合并后是否是一个合理的英文词（3-15字母）
-    combined = end_fragment + start_fragment
-    if 3 <= len(combined) <= 15:
-        return (end_fragment, start_fragment, combined)
-    
-    return None
-
-
-def fix_broken_words(subs):
-    """修复被断开的英文单词"""
+def fix_broken_words(subs, max_chars=DEFAULT_MAX_CHARS):
     fixes = 0
-    max_rounds = 50
-    
-    for _ in range(max_rounds):
-        changed = False
-        i = 0
-        while i < len(subs) - 1:
-            result = find_broken_word(subs, i)
-            if result:
-                end_frag, start_frag, combined = result
-                
-                # 合并两行
-                t1 = subs[i].text.strip()
-                t2 = subs[i + 1].text.strip()
-                
-                # 去掉行尾的半词和行首的半词
-                # 找到 end_frag 在 t1 末尾的位置
+    i = 0
+    while i < len(subs) - 1:
+        t1 = subs[i].text.strip()
+        t2 = subs[i + 1].text.strip()
+
+        match_end = re.search(r'([a-zA-Z]+)$', t1)
+        match_start = re.match(r'^([a-zA-Z]+)', t2)
+
+        if match_end and match_start:
+            end_frag = match_end.group(1)
+            start_frag = match_start.group(1)
+
+            # 断裂词：至少一个片段<4字母
+            is_broken = len(end_frag) < 4 or len(start_frag) < 4
+            # 短词对：两个都是4-6字母
+            is_short_words = 4 <= len(end_frag) <= 6 and 4 <= len(start_frag) <= 6
+
+            if is_broken or is_short_words:
+                # 断裂词直接拼接，短词对加空格
+                if is_broken:
+                    combined = end_frag + start_frag
+                else:
+                    combined = end_frag + ' ' + start_frag
+
                 end_pos = t1.rfind(end_frag)
-                # 找到 start_frag 在 t2 开头的位置
                 start_pos = t2.find(start_frag)
-                
-                # 保留 t1 的中文部分 + combined + t2 剩余部分
                 before = t1[:end_pos].rstrip()
                 after = t2[start_pos + len(start_frag):].lstrip()
-                
-                combined_text = before + ' ' + combined + ' ' + after if before and after else \
-                                before + ' ' + combined if before else \
-                                combined + ' ' + after if after else combined
-                
-                combined_text = combined_text.strip()
-                
-                # 如果合并后不超过 MAX_CHARS，直接合并为一行
-                if len(combined_text) <= MAX_CHARS:
+
+                parts = [p for p in [before, combined, after] if p]
+                combined_text = ' '.join(parts)
+
+                if len(combined_text) <= max_chars:
                     subs[i].text = combined_text
                     subs[i].end = subs[i + 1].end
                     subs.pop(i + 1)
                     fixes += 1
-                    changed = True
-                    # 不前进，继续检查当前位置
                     continue
                 else:
-                    # 合并后超长，需要重新分割
-                    # 在 combined 之后找分割点
-                    full_text = combined_text
-                    split_pos = -1
-                    
-                    # 在 combined 之后的中文里找标点
-                    after_combined = combined + after if after else combined
-                    for p in '。！？；，,':
-                        pos = after_combined.find(p)
-                        if pos > 0 and len(combined + after_combined[:pos + 1]) <= MAX_CHARS:
-                            part1 = before + ' ' + combined + after_combined[:pos + 1]
-                            part2 = after_combined[pos + 1:].strip()
-                            if len(part1) <= MAX_CHARS and len(part2) <= MAX_CHARS:
-                                subs[i].text = part1.strip()
-                                subs[i + 1].text = part2
-                                # 按字符比例分时间
-                                total_dur = subs[i + 1].end - subs[i].start
-                                ratio = len(part1) / (len(part1) + len(part2))
-                                split_time = subs[i].start + int(total_dur * ratio)
-                                subs[i].end = split_time
-                                subs[i + 1].start = split_time
-                                fixes += 1
-                                changed = True
-                                i += 1
-                                continue
-                    
-                    # 没找到好的分割点，尝试在 combined 前切
+                    # 超长：把英文词移到下一行
                     if before:
-                        split_pos = -1
-                        for p in '。！？；，,':
-                            pos = before.rfind(p)
-                            if pos > 0:
-                                split_pos = pos + 1
-                                break
-                        
-                        if split_pos > 0 and len(before[:split_pos]) <= MAX_CHARS:
-                            part1 = before[:split_pos].strip()
-                            part2 = before[split_pos:].strip() + ' ' + combined + ' ' + after if after else before[split_pos:].strip() + ' ' + combined
-                            part2 = part2.strip()
-                            
-                            if len(part1) <= MAX_CHARS and len(part2) <= MAX_CHARS:
-                                subs[i].text = part1
-                                subs[i + 1].text = part2
-                                total_dur = subs[i + 1].end - subs[i].start
-                                ratio = len(part1) / (len(part1) + len(part2))
-                                split_time = subs[i].start + int(total_dur * ratio)
-                                subs[i].end = split_time
-                                subs[i + 1].start = split_time
-                                fixes += 1
-                                changed = True
-                                i += 1
-                                continue
-                    
-                    # 实在没办法，合并为一行（可能超长）
-                    subs[i].text = combined_text
-                    subs[i].end = subs[i + 1].end
-                    subs.pop(i + 1)
-                    fixes += 1
-                    changed = True
-                    continue
-            
-            i += 1
-        
-        if not changed:
-            break
-    
+                        part1 = before
+                        part2_parts = [p for p in [combined, after] if p]
+                        part2 = ' '.join(part2_parts)
+
+                        if len(part1) <= max_chars and len(part2) <= max_chars:
+                            subs[i].text = part1
+                            subs[i + 1].text = part2
+                            total_dur = subs[i + 1].end - subs[i].start
+                            ratio = len(part1) / max(1, len(part1) + len(part2))
+                            split_time = subs[i].start + int(total_dur * ratio)
+                            subs[i].end = split_time
+                            subs[i + 1].start = split_time
+                            fixes += 1
+                            continue
+
+        i += 1
     return subs, fixes
 
 
-def process_file(input_path, output_path):
+def process_file(input_path, output_path, max_chars=DEFAULT_MAX_CHARS):
     subs = pysubs2.load(input_path, encoding='utf-8')
     original = len(subs)
-    fixed, fixes = fix_broken_words(subs)
+    fixed, fixes = fix_broken_words(subs, max_chars)
     fixed.save(output_path, encoding='utf-8')
     return original, len(fixed), fixes
 
 
-# 处理
-srt_files = sorted([f for f in os.listdir(INPUT_DIR) if f.endswith('.srt')])
-print(f"找到 {len(srt_files)} 个字幕文件\n")
+def main():
+    parser = argparse.ArgumentParser(description='修复英文单词断裂')
+    parser.add_argument('--input', required=True, help='SRT 文件路径或目录')
+    parser.add_argument('--output', default=None, help='输出目录')
+    parser.add_argument('--max-chars', type=int, default=DEFAULT_MAX_CHARS, help='每行最大字符数')
+    args = parser.parse_args()
 
-total_fixes = 0
-for srt_file in srt_files:
-    input_path = os.path.join(INPUT_DIR, srt_file)
-    output_path = os.path.join(OUTPUT_DIR, srt_file)
-    
-    try:
-        orig, final, fixes = process_file(input_path, output_path)
-        total_fixes += fixes
-        print(f"[OK] {srt_file}")
-        print(f"     修复 {fixes} 处断裂\n")
-    except Exception as e:
-        import traceback
-        print(f"[FAIL] {srt_file}: {e}")
-        traceback.print_exc()
+    if args.output:
+        output_dir = args.output
+    else:
+        input_parent = os.path.dirname(os.path.abspath(args.input))
+        output_dir = os.path.join(input_parent, "no_broken_words")
+    os.makedirs(output_dir, exist_ok=True)
 
-print(f"总计修复 {total_fixes} 处断裂\n完成！输出: {OUTPUT_DIR}")
+    input_path = os.path.abspath(args.input)
+    total_changes = 0
+
+    if os.path.isdir(input_path):
+        srt_files = sorted([f for f in os.listdir(input_path) if f.endswith('.srt')])
+        print(f"找到 {len(srt_files)} 个 SRT 文件\n")
+        for srt_file in srt_files:
+            inp = os.path.join(input_path, srt_file)
+            out = os.path.join(output_dir, srt_file)
+            try:
+                orig, final, changes = process_file(inp, out, args.max_chars)
+                total_changes += changes
+
+                # 验证
+                out_subs = pysubs2.load(out, encoding='utf-8')
+                remaining = 0
+                for j in range(len(out_subs) - 1):
+                    t1 = out_subs[j].text.strip()
+                    t2 = out_subs[j + 1].text.strip()
+                    m1 = re.search(r'([a-zA-Z]+)$', t1)
+                    m2 = re.match(r'^([a-zA-Z]+)', t2)
+                    if m1 and m2 and (len(m1.group(1)) < 4 or len(m2.group(1)) < 4):
+                        remaining += 1
+
+                status = "OK" if remaining == 0 else f"REMAINING {remaining}"
+                print(f"[OK] {srt_file}")
+                print(f"     修复 {changes} 处断裂  {status}")
+            except Exception as e:
+                import traceback
+                print(f"[FAIL] {srt_file}: {e}")
+                traceback.print_exc()
+    elif os.path.isfile(input_path):
+        out_file = os.path.join(output_dir, os.path.basename(input_path))
+        orig, final, changes = process_file(input_path, out_file, args.max_chars)
+        total_changes += changes
+        print(f"[OK] {os.path.basename(input_path)}: {orig} -> {final} 条，修复 {changes} 处")
+
+    print(f"\n总计修复 {total_changes} 处断裂\n完成！输出: {output_dir}")
+
+
+if __name__ == '__main__':
+    main()
