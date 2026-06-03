@@ -70,12 +70,8 @@ def fix_broken_words(subs, max_chars=DEFAULT_MAX_CHARS):
 
                         if len(part1) <= max_chars and len(part2) <= max_chars:
                             subs[i].text = part1
+                            subs[i].end = subs[i + 1].start  # 确保不重叠
                             subs[i + 1].text = part2
-                            total_dur = subs[i + 1].end - subs[i].start
-                            ratio = len(part1) / max(1, len(part1) + len(part2))
-                            split_time = subs[i].start + int(total_dur * ratio)
-                            subs[i].end = split_time
-                            subs[i + 1].start = split_time
                             fixes += 1
                             continue
 
