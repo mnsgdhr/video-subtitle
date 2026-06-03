@@ -49,9 +49,14 @@ Phase 5   质量审查与修复
    5.7  三行合并重分：前后超长时合并前+当前+后，按标点重分
    5.8  多轮迭代直到无问题行
 
-Phase 6   输出
-   6.1  SRT 文件输出到 final_subtitles/
-   6.2  报告处理统计
+Phase 6   时间戳修复
+   6.1  检测时间戳重叠（当前行结束 > 下一行开始）
+   6.2  将当前行结束时间设为下一行开始时间
+   6.3  确保每行至少显示 300ms
+
+Phase 7   输出
+   7.1  SRT 文件输出到 fixed_timestamps/
+   7.2  报告处理统计
 ```
 
 ---
@@ -72,6 +77,18 @@ python process.py --input video.mp4 --fw-dir /path/to/faster-whisper --max-chars
 python process.py --input video.mp4 --fw-dir /path/to/faster-whisper --domain generic
 ```
 
+### 质量审查（修复问题行）
+
+```bash
+python review_and_fix.py --input ./corrected_subtitles
+```
+
+### 修复时间戳重叠
+
+```bash
+python fix_timestamps.py --input ./final_subtitles
+```
+
 ---
 
 ## 文件结构
@@ -81,6 +98,7 @@ video-subtitle/
 ├── SKILL.md              # 本文件
 ├── process.py            # 主处理脚本（转录+断句+纠错）
 ├── review_and_fix.py     # 质量审查与修复工具
+├── fix_timestamps.py     # 时间戳重叠修复工具
 ├── requirements.txt      # 依赖
 └── README.md             # 项目说明
 ```
